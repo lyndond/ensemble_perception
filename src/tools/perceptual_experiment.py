@@ -3,7 +3,7 @@ import os.path as op
 import numpy as np
 import torch
 from torch import Tensor
-from image import rescale, unprocess, clamp, preprocess_image, vec_to_image
+from image import unprocess, clamp, preprocess_image, vec_to_image
 import utils
 import pickle
 from typing import Dict, List
