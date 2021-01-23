@@ -1,11 +1,8 @@
 """
-This script is called from the shell and trains the models via Slurm arrays
+This script is called from the shell and trains the models locally, or on hpc via Slurm arrays
 """
-
 import argparse
 import os
-import sys
-import time
 import matplotlib
 import matplotlib.pylab as plt
 import numpy as np
@@ -18,8 +15,11 @@ from tqdm import tqdm
 matplotlib.use('Agg')
 
 
-def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
-    """"""
+def model_trainer(model: torch.nn.Module,
+                  train_loader: DataLoader,
+                  valid_loader: DataLoader,
+                  args: argparse.Namespace) -> torch.nn.Module:
+    """Trains model using arguments parsed from shell"""
 
     train_logs = {}
     train_logs['accuracy'] = []
@@ -28,15 +28,13 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
     valid_logs['accuracy'] = []
     valid_logs['loss'] = []
 
-    # define model
-    model = models.resnet18(pretrained=False)
-    model.fc = torch.nn.Linear(512, 10)  # replace fully connected
-
     if torch.cuda.is_available():
-        print('[ Using CUDA ]')
+        print('Using CUDA')
         model = model.cuda()
+    else:
+        print('USING CPU')
 
-    print('number of parameters is ', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print(f'n params {sum(p.numel() for p in model.parameters() if p.requires_grad):,}')
 
     """DEFINE OPTIMIZER"""
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
@@ -46,12 +44,8 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
     """ TRAINING LOOP: LOOP OVER EPOCHS"""
     pbar = tqdm(range(args.num_epochs), desc='Epoch')
     for h in pbar:
-        pbar.set_description(f'Epoch {h:d}')
         total_n_correct = 0
         loss_sum = 0
-
-        if h == 0:
-            start_time_total = time.time()
 
         if h >= 30 and h % 30 == 0:
             for param_group in optimizer.param_groups:
@@ -60,6 +54,7 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
 
         # loop over images
         for i, batch in enumerate(train_loader, 0):
+            pbar.set_description(f'Epoch {h:d}/{len(pbar)} | train_batch {i}/{len(train_loader)}')
 
             inputs, labels = batch['image'], batch['label']
 
@@ -86,9 +81,6 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
         train_logs['accuracy'].append(total_n_correct / len(train_loader.dataset))
         train_logs['loss'].append(loss_sum / (i + 1))
 
-        if h == 0:
-            print("--- %s seconds for one epoch ---" % (time.time() - start_time_total))
-
         """VALIDATION STEP"""
         model.eval()
 
@@ -96,6 +88,8 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
         loss_sum = 0
 
         for i, valid_batch in enumerate(valid_loader, 0):
+            pbar.set_description(f'Epoch {h:d}/{len(pbar)} | valid_batch {i}/{len(valid_loader)}')
+
             inputs, labels = valid_batch['image'], valid_batch['label']
             if torch.cuda.is_available():
                 inputs = inputs.cuda()
@@ -126,18 +120,17 @@ def model_trainer(train_loader: DataLoader, valid_loader: DataLoader, args):
         axs[0].plot(range(len(train_logs['loss'])), train_logs['loss'], 'b-o', label='train loss')
         axs[0].plot(range(len(valid_logs['loss'])), valid_logs['loss'], 'r-o', label='validation loss')
 
-        axs[0].set_ylabel('loss')
-        axs[0].set_xlabel('epoch')
-        axs[0].set_title('min validation loss ' + str(round(min(valid_logs['loss']), 2)) + ' from epoch ' + str(
-            valid_logs['loss'].index(min(valid_logs['loss']))))
+        axs[0].set(ylabel='loss',
+                   xlabel='epoch',
+                   title=f'min valid loss {min(valid_logs["loss"]):.2f} from epoch {np.argmin(valid_logs["loss"])}')
         axs[0].legend()
 
         axs[1].plot(range(len(train_logs['accuracy'])), train_logs['accuracy'], 'b-*', label='train accuracy')
         axs[1].plot(range(len(valid_logs['accuracy'])), valid_logs['accuracy'], 'r-*', label='validation accuracy')
-        axs[1].set_title('max validation accuracy ' + str(round(max(valid_logs['accuracy']), 2)) + ' from epoch ' + str(
-            valid_logs['accuracy'].index(max(valid_logs['accuracy']))))
-        axs[1].set_ylabel('accuracy')
-        axs[1].set_xlabel('epoch')
+        axs[1].set(ylabel='loss',
+                   xlabel='epoch',
+                   title=f'max valid acc {max(valid_logs["accuracy"]):.2f} from epoch'
+                         f' {np.argmax(valid_logs["accuracy"])}')
         axs[1].legend()
 
         fig.savefig(args.dir_name + '/loss.png')
@@ -166,8 +159,8 @@ def main():
                                                            batch_size=int( args.batch_size/2),
                                                            crop_size=256)
 
-    print('number of train images ', len(train_loader.dataset))
-    print('number of valid images ', len(valid_loader.dataset))
+    print(f'n train images: {len(train_loader.dataset)}, n batch: {len(train_loader)}')
+    print(f'n valid images: {len(valid_loader.dataset)}, n batch: {len(valid_loader)}')
 
     # train multiple models and store them in separate folders
     args.dir_name = args.dir_name + str(args.SLURM_ARRAY_TASK_ID)
@@ -175,7 +168,10 @@ def main():
     if not os.path.exists(args.dir_name):
         os.makedirs(args.dir_name)
 
-    model_trainer(train_loader, valid_loader, args)
+    # define model
+    model = models.resnet18(pretrained=False)
+    model.fc = torch.nn.Linear(512, 10)  # replace fully connected
+    model_trainer(model, train_loader, valid_loader, args)
 
 
 if __name__ == "__main__":
