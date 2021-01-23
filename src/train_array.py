@@ -148,7 +148,7 @@ def main():
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=0.1,
                         help='learning rate (default: 0.1)')
-    parser.add_argument('--dir_name', default='../models/resnet_num_')
+    parser.add_argument('--dir_name', default='./data/models/resnet_num_')
     parser.add_argument('--SLURM_ARRAY_TASK_ID', type=int)
     parser.add_argument('--momentum', default=.9)
 
